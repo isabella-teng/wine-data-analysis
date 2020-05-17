@@ -1,0 +1,454 @@
+---
+title: "SDS_230_Final Project (5/3/2019)"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+Group Members: Gina Zhu, Isabella Teng, Josefina Mendez
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width = 6, fig.height = 4)
+```
+**Introduction**
+As wine lovers, it can be difficult choosing the best wine. Wine can come from a variety of countries and can take on drastically different prices. In this project, we seek to evaluate and determine how to identify the best wine. 
+  With this goal in mind, we used wine review data from Kaggle collected in 2017 and examined several questions that a typical consumer may be interested in when shopping for wine. The data covers approximately 13000 reviews of wine from 43 total countries, and each wine review contains information such as country of origin, price, and a rating on a scale of 1-100. We were interested in using this Wine Review Data to better understand: 
+
+      1. Which countries are the major producers of wine and what sorts of wine have the highest ratings in these countries? 
+      2. Is there any difference in mean ratings of wine produced from different countries? 
+      3. Is there a correlation between price of the wine and its rating, and is this related to country of origin? 
+      4. Can we estimate true wine prices for each different "category" of wine ratings? And does price increase with rating cateogry as       expected? 
+      5. Can we identify what are the predictors for wine ratings? 
+      6. Is there any difference in ratings from wineries from specific regions within a country? 
+
+Further, we broadened our scope and completed some Web Data scraping from Wikipedia to find out more information about alcohol consumption in the world -- and more specifically, how much consumers in each country actually choose to drink wine over other forms of alcohol. We asked:
+
+      1. What is the percentage of consumption of wine out of (Wine, Beer, Spirits) for each country?
+      2. What is the layout of alcohol consumption in the country that is most reviewed by Kaggle? 
+
+```{r, echo=FALSE}
+#Reading in the data into a data frame 
+wine <-  read.csv('winemag-data-130k-v2.csv', header=TRUE, na.strings=c("","NA"))
+#head(wine) #uncomment to display
+#dim(wine)
+#names(wine)
+#str(wine)
+```
+*The data set in use contains approximately 130k wine reviews with accompanying information such as variety, location, winery, price, and description of the wine. This data set can be accessed at:* [**LINK**](https://www.kaggle.com/zynicide/wine-reviews)
+
+**Complete List of Variables** 
+
+X (*For 0-indexing*), Country (*The country where the wine is from*), Description (*Characteristic description of the wine including flavor, aroma, etc.*), Designation (*The vineyard within the winery where the grapes that made the wine are from.*), Points (*This is the methadology of rating the wine. The number of points WineEnthusiast rated the wine on a scale of 1-100*), Price (*The cost for a bottle of the wine*), Province (*The province or state that the wine is from*), Region_1 (*The wine growing area in a province or state (ie Napa)*), Region_2 (*Some wine include an even more specific region specified within a wine growing area (ie Rutherford inside the Napa Valley), but this value can also be blank*), Taster_name (*The name of the wine reviewer*), Taster_twitter_handle (*The twitter handle of the wine reviewer*), Title (*Title of the wine review*), Variety (*The type of grapes that were used to make the wine (ex. Pinot Noir)*), Winery (*The winery that produced the wine*).
+
+**DATA CLEANING PROCESS**
+We employed multiple techniques to produce a managable and clean dataframe, including dealing with missing data, reducing dimensionality of the original dataset, and adding numerical columns that would help us in our data analyses.
+  To better understand our data, we plotted the percent of missing data by column and removed the columns: regions_2, X, and taster_twitter_handle. Then, since price and country were the main features we wanted to investigate, we removed rows with missing data for those columns. Another feature we cleaned was wine variety. Upon investigating, we found that there were thousands of wine varieties and chose to remove ones that were reviewed less than 2000 times. Similarly, we dropped countries as well that had less than 2000 wine reviews.
+  Two columns we added to our dataframe were ratings_num and ratings. Following Wine Magazine's chart that gave categorical rankings to the points assigned to wines, we decided to add both a categorical and numerical ranking column so that we'd have more features to analyze. We also added an additional continuous variable of winePercent (percent of wine consumption) acquired from Web Data Scraping. 
+
+**Issues We Encountered:**
+  At first we used `na.omit` to remove rows where price or country was missing, but this removed more than half of the rows, which raised concern. Switching to `complete.cases` worked instead. Other considerations and decisions we had to make was with dropping rows versus renaming values. With wine variety, we originally created a new category "Other" for varieties reviewed less than 2000 times, but this made the 'Other' category the greatest, so instead we dropped these rows, as we were more interested in the most popular wine varieties. Another concern we encountered was with originally combining the Superb and Classic ratings as there were very few Classic wines; however, this increased the interval of this last category as compared to the others, later affecting bootstrap results, so we decided to leave it as it is.
+
+```{r, echo=FALSE}
+#Cleaning
+na_count <- sapply(wine, function(y) mean(is.na(y)))
+
+barplot(na_count, col="pink", main = "Missing Data per Column", xlab = "Column Name", ylab="Percent Missing Data", las=2, cex.names = 0.5) 
+
+#lets drop columns: region_2, taster handle
+wine <- wine[, !(names(wine) %in% c("region_2", "taster_twitter_handle"))]
+
+#drop rows where the price or country is missing
+wine <- wine[complete.cases(wine[,c("price", "country")]),]
+```
+Add a column mapping scores to categorical ratings according to: [SITE](https://www.winemag.com/2019/01/02/wine-vintage-chart-2019/)
+Acceptable (0), Good(1), Very Good (2), Excellent (3), Superb (4), Classic (5)
+```{r,echo=FALSE}
+wine$rating <- ifelse(wine$points <= 82, "Acceptable",
+                      ifelse(wine$points <= 86, "Good",
+                             ifelse(wine$points <= 89, "Very Good",
+                                    ifelse(wine$points <= 93, "Excellent",
+                                           ifelse(wine$points <= 97, "Superb", "Classic")))))
+table(wine$rating)
+
+#let's create a numerical rating as well
+wine$rating_num <- ifelse(wine$rating == "Acceptable", 0,
+                      ifelse(wine$rating == "Good", 1,
+                             ifelse(wine$rating == "Very Good", 2,
+                                    ifelse(wine$rating == "Excellent", 3,
+                                           ifelse(wine$rating == "Superb", 4, 5)))))
+
+table(wine$rating_num)
+```
+Cleaning Wine Varieties
+Let's drop the wine grape varieties that have been reviewed less than 2000 times
+```{r,echo=FALSE}
+head(sort(table(wine$variety), decreasing = TRUE))
+
+wine <- wine[wine$variety %in% (levels(wine$variety)[table(wine$variety) > 2000]), ]
+wine$variety <- droplevels(wine$variety)
+```
+Let's remove countries that have less than 2000 reviewed wines
+```{r, echo=FALSE}
+country_table <- sort(table(wine$country), decreasing = TRUE)
+wine <- wine[wine$country %in% names(country_table)[country_table>2000],]
+wine$country <- droplevels(wine$country)
+barplot(sort(table(wine$country), decreasing = TRUE), col="blue", main = "Country Number Reviews", xlab = "Country", ylab="Number Reviews", las=2, ylim = c(0, 50000), cex.axis = 0.8)
+wine$points <- as.numeric(wine$points)
+```
+**DATA SCRAPING FOR CONTINUOUS VARIABLES**
+We wanted to add more continuous variables for our data set so we decided to scrape data on alcohol consumption per capital from the site: [SITE](https://en.wikipedia.org/wiki/List_of_countries_by_alcohol_consumption_per_capita). This Wikapedia article contains data from countries all over the world, and tracks the % of each type of alcohol is consumed in that country out of all types of alcohol. The types of alcohol the website tracked were: Beer, Spirits, Wine, Other. 
+```{r, include=FALSE}
+library(car)
+library(leaps)
+library(lubridate)
+library('rvest')
+library(dplyr)
+```
+  
+```{r,}
+#Defining the URL of interest
+urlWine <- "https://en.wikipedia.org/wiki/List_of_countries_by_alcohol_consumption_per_capita"
+
+#Reading the HTML code from the website into a new object
+wineConsumption <- read_html(urlWine)
+
+#Reading in Country information and cleaning
+country <- gsub("^\\s+", "", html_text(html_nodes(wineConsumption, ":nth-child(9) tr :nth-child(2)")))
+country <- unique(country)
+country <- gsub("United States", "US", country)
+
+#Reading in Percent Wine consumption data and cleaning
+winePercent <- html_text(html_nodes(wineConsumption, "tr :nth-child(7)"))
+winePercent <- as.numeric(winePercent[c(1:192)])
+winePercentData<- data.frame(country, winePercent)[-c(1),]
+
+#Merging into our larger data set 
+wineNew<- merge.data.frame(wine, winePercentData, by = 'country', all = TRUE, sort = FALSE)
+wineNew <- left_join(wine, winePercentData)
+```
+
+**DESCRIPTIVE PLOTS, SUMMARY INFORMATION, AND ANALYSIS**
+**T-Test**
+We wanted to see if there was a difference between the mean ratings for wines produced in the US and France - the two most reviewed countries. We first decided to look at the difference in numerical ranking categories between the US and French wines, where wines are assigned a number from 0-5, which each number corresponding to a categorical rating (acceptable, good, etc.) based on the number of rating points it received. We also decided to look at the difference in the ratings based on raw points assigned to each wine where they were assigned a number from 0-100, with a higher number corresponding to a better wine. We decided to use a two-sample t-test to test the difference. Our null hypothesis is that the difference in mean numerical ratings from wines produced in the US and France is 0, and our alternative hypothesis is that the difference is not zero. We chose and alpha of 0.05 to test the significance. 
+```{r, echo=FALSE}
+#Get data for France and US
+wineFRA_USA <- subset(wine[, c("country", "rating_num", "points")], country %in% c("France", "US"))
+wineFRA_USA$country <- droplevels(wineFRA_USA$country)
+
+boxplot(rating_num ~ country, data = wineFRA_USA, main = "Boxplot of Wine Category Ratings for USA and France", ylab = "Rating Class", col = "lavender")
+
+boxplot(points ~ country, data = wineFRA_USA, main = "Boxplot of Wine Rating Points for USA and France", ylab = "Points", col = "lavender") 
+```
+T Test by rating_num
+```{r, echo=FALSE}
+by(wineFRA_USA$rating_num, wineFRA_USA$country, summary)
+t.test(rating_num ~ country, data = wineFRA_USA) 
+```
+T Test by points
+```{r, echo=FALSE}
+by(wineFRA_USA$points, wineFRA_USA$country, summary)
+t.test(points ~ country, data = wineFRA_USA) 
+```
+*We conducted a Welch Two Sample t-test to see if there was a difference in the mean wine ratings between wines produced in France vs. the USA. Looking at the difference in means of numerical rating categories (0-5), our p-value = 0.05, which is equal to our alpha of 0.05, meaning the difference is not statistically significant. Our 95% confidence interval for the difference in means is from - 0.04 to 0, which includes 0 on the upper limit. Thus, we fail to reject our null hypothesis that the difference in mean numerical category ratings for US and French wines is 0. Looking at the difference in means of rating points, our p-value was 0.3414, which is much greater than our alpha of 0.05. Our 95% confidence interval for the difference in means is from - 0.09 to 0.03, which very clearly includes 0. Thus, we again fail to reject our null hypothesis that the difference in mean rating in points for US and French wines is 0.*
+
+We were now interested in getting a better picture of wine consumption out of **all alcohol types** in these countries; data scraped from Wikapedia. 
+```{r, echo=FALSE}
+winePercent <- na.omit(winePercent)
+
+#Grouping together the data by wine percent consumption 
+GroupedData <- aggregate(winePercent ~country, wineNew, FUN = function(winePercent) mean(as.numeric(as.character(winePercent))))
+
+#Vizualizing % Wine consumption for all major countries we are analyzing
+OrderedData <- GroupedData[order(GroupedData$winePercent),]
+x <- barplot(OrderedData$winePercent, pch = 19, col = "mistyrose", main = "Percent Wine Consumption by Country", xlab = "Country", ylab = "% Wine Consumption", names.arg = OrderedData$country, ylim = c(0,70))
+y <- as.matrix(OrderedData$winePercent)
+text(x, y+2, labels = as.character(y))
+```
+
+*According to the Kaggle data, wines originiating from the U.S. are the most heavily reviewed. However, even though the U.S. seems to produce a higher quantity of wine, consumers in the U.S. only choose to drink wine 17.3% of the time over other types of alcohol. On the other hand, wine orginiating from Portugal had relatively low number of reviews in the Kaggle data, but wine consumption in this country is 55% out of all alcohol choices. This seems to suggest that there is not a perfect relation between a country producing "reviewable" wine, and the country's citizens consuming wine in general.*
+
+It's interesting that the the majoriy of Kaggle Reviews are wines from the United States, yet wine does not seem to be the most popular alcohol of choice for US residents. So what is? 
+```{r, echo=FALSE}
+#Scraping for the rest of alcohol consumption data from the United States (not just wine)
+
+#Defining the URL of interest
+urlWine <- "https://en.wikipedia.org/wiki/List_of_countries_by_alcohol_consumption_per_capita"
+
+#Reading the HTML code from the website into a new object
+wineConsumption <- read_html(urlWine)
+
+#Already have wine consumption in the united states
+wineUS <- GroupedData[6,2]
+
+#Extacting Percentage of Beer Consumption in the United States 
+beerUS <- html_text(html_nodes(wineConsumption, "tr:nth-child(49) td:nth-child(6)"))
+beerUS <- as.numeric(beerUS)
+
+#Extracting Percentage of Spirits Consumption in the United States
+spiritsUS <- html_text(html_nodes(wineConsumption, "tr:nth-child(49) td:nth-child(8)"))
+spiritsUS <- as.numeric(spiritsUS)
+
+#Omitting addition of "other" type of alcohol since website reveals this is 0%
+
+#Pie Chart with Percentages
+slices <- c(wineUS, beerUS, spiritsUS) 
+lbls <- c("Wine", "Beer", "Spirits")
+pct <- round(slices/sum(slices)*100)
+lbls <- paste(lbls, pct) # add percents to labels 
+lbls <- paste(lbls,"%",sep="") # add % to labels 
+pie(slices,labels = lbls, col=rainbow(length(lbls)),
+   main="Alcohol Consumption in the United States")
+```
+
+*The most consumed type of alcohol in the United States is Beer, followed by Spirits (which is defined as all distilled beverages such as vodka), with wine being the least popular. Therefore, while the majority of the wine reviewed in the Kaggle data set are produced in the United States, US citizens prefer other forms of alcohol more.*
+
+**Correlation Tests**
+We wanted to see if there was any correlation between the price and rating of wines. Are higher rated wines really more expensive as one might initially think?
+```{r,include=FALSE}
+winecorr <- wine
+winecorr <- wine[, c(1, 2, 5, 6)]
+x <- winecorr$points
+y <- winecorr$price
+```
+Correlation between price and rating of wines: 
+```{r, echo=FALSE}
+cor(winecorr$points, winecorr$price)
+plot(x,y, pch=19, col="red", xlab="Wine Rating in Points",
+     ylab = "Wine Price in USD")
+mtext(paste("Sample Correlation =", round(cor(x,y),3)), cex=1.2, line = 0)
+mtext("Wine Rating vs Wine Price", cex=1.2, line = 1)
+```
+*It seems that there is a moderate positive correlation (0.413) between the Wine Rating in Points and Price. Wines with higher ratings generally will be more expensive.*
+
+We were interested in breaking down this correlation more. Does this correlation between price and rating of wines change depending on country? We decided to look at the top 3 wine producing countries in this data set, which were the US, France, and Italy. 
+```{r,echo=FALSE}
+#saved function to plot correlations
+# savedCors <- rep(NA, 3)
+# myCor <- function(x,y, title){
+#   plot(x,y,pch=19, col="red", xlab = "Rating in Points", ylab = "Price")
+#   mtext(paste("Sample Correlation = ", round(cor(x,y),3)), cex=1.2)
+#   mtext(title, cex=1.2, line = 1)
+#   return(cor(x,y));
+# }
+
+#For US
+winetopUS <- subset(wine, country %in% c("US"))
+winetopUS <- winetopUS[winetopUS$price < 1500,] #remove that huge outlier of price
+# savedCors[1] <- myCor(winetopUS$points, winetopUS$price, "Wine Rating vs Wine Price for US")
+
+#For France
+winetopFRA <- subset(wine, country %in% c("France"))
+# savedCors[2] <- myCor(winetopFRA$points, winetopFRA$price, "Wine Rating vs Wine Price for France")
+
+#For Italy
+winetopITL <- subset(wine, country %in% c("Italy"))
+# savedCors[3] <- myCor(winetopITL$points, winetopITL$price, "Wine Rating vs Wine Price for Italy")
+
+# (CountryCorr <- data.frame("Country" = c("US", "France", "Italy"), "Sample Correlation" = savedCors))
+
+#Jitter the plots to see the distinct observations more clearly
+myCorJittered <- function(x, y, title){
+  plot(jitter(x), jitter(y), pch=19, col="red", xlab = "Rating in Points", ylab = "Price")
+  mtext(paste("Sample Correlation = ", round(cor(x,y),3)), cex=1.2)
+  mtext(title, cex=1.2, line = 1)
+  return(cor(x,y));
+}
+
+#For US
+myCorJittered(winetopUS$points, winetopUS$price, "Wine Rating vs Wine Price for US")
+
+#For France
+myCorJittered(winetopFRA$points, winetopFRA$price, "Wine Rating vs Wine Price for France")
+
+#For Italy
+myCorJittered(winetopITL$points, winetopITL$price, "Wine Rating vs Wine Price for Italy")
+```
+*The top 3 wine producing countries in this dataset all have moderate positive correlations around the value of 0.4 - 0.5. All countries except France have slightly stronger positive correlations than the overall correlation we did for price vs. rating when considering all countries. So generally for any country, the higher the wine rating in points, the more expensive the wine is.* 
+
+**Bootstraped Means of Prices for Different Wine Ranking Categories** 
+We were interested in estimating the true wine prices for each of the score categories - Acceptable, Good, Very Good, Excellent, Superb, and Classic - by conducting a bootstrap. We wanted to see if there were differences in the estimated true mean and 95% confidence intervals for the prices of each category while taking into account any underlying variation in the data. We did this with the data from the US, France, and Italy - the 3 countries with the greatest number of wines reviewed. We would like to see if the estimate of the true mean price increases with the rating category of the wine as we would expect. 
+```{r,echo=FALSE}
+winetop <- subset(wine, country %in% c("US", "Italy", "France"))
+table(winetop$rating)
+
+#function for bootstrap
+myBootstrap <- function(category) {
+  N <- 10000
+  scoreCat <- rep(NA, N)
+  for(i in 1:N) {
+    scoreCat[i] <- mean(sample(winetop$price[winetop$rating == category], 
+                               sum(winetop$rating == category), replace = TRUE))
+  }
+  (qCat <- quantile(scoreCat, c(0.025, 0.975)))
+  round(qCat, 2)
+  
+  hist(scoreCat, main = paste(paste("Bootstrapped Sample Means of", category), "Wine Prices"), 
+     xlab = "",
+     col = "light blue",
+     breaks = 50)
+  abline(v=qCat, lwd = 3, lty = 2, col= "black")
+  legend("topright", "Bootstrapped CI", lwd = 3, col = "black", lty = 2, cex = 0.8 )
+  
+  summary(qCat)
+}
+#For Acceptable ranked wines
+myBootstrap("Acceptable")
+
+# For Good ranked wines 
+myBootstrap("Good")
+
+#For Very Good ranked wines
+myBootstrap("Very Good")
+
+#For Excellent ranked wines
+myBootstrap("Excellent")
+
+#For Superb ranked wines
+myBootstrap("Superb")
+
+#For Classic wines
+myBootstrap("Classic")
+
+(Summ <- data.frame("Rating Category" = c("Acceptable", "Good", "Very Good", "Excellent", "Superb", "Classic"), "Mean Price" = c(20.66, 22.91, 30.29, 47.21, 99.33, 278.4), "95 Pct Confidence Interval" = c("20.38 - 20.94", "22.81-23.01", "30.15 - 30.44", "47.02 - 47.39", "97.67 - 100.99", "248.4 - 308.1")))
+```
+*Constructing bootstrap confidence intervals for each of the score categories gave us an idea of how the true mean prices differed from category to category. The results followed our initial hypothesis that the estimated true mean price would increase with a higher rating category for the wine. None of the bootstrapped 95% confidence intervals for each rating category overlap, signaling that the true mean prices are indeed different for each rating category. It is also seen that the mean price for the wines increases as the rating gets better.*
+
+**Permutation Test for Mean of Prices for Acceptable and Good**
+While the bootstrap confidence intervals for estimates of the true means above do not seem to overlap, we wanted to more rigorously evaluate whether there was a statistically significant difference in the means for groups that appeared most similar in their mean prices. We found above that the confidence intervals are most similar for prices in the "Acceptable" and "Good" rating categories. To compare whether "Good" wines do in fact have higher prices on average than "Acceptable" wines, we construct and evaluate the following hypothesis test: 
+
+$$H_0: \mu_{Good}-\mu_{Acceptable}=0$$
+$$H_a: \mu_{Good}-\mu_{Acceptable} \ne 0$$
+```{r, include=FALSE}
+#isolate Good and Acceptable ratings
+wineReduced <- subset(wineNew, rating %in% c("Acceptable", "Good"))
+table(wineReduced$rating)
+
+#there are too many Good rankings, so we will randomly remove 15975 of them (about 90%)
+#allGoods <- wineReduced$rating == "Good"
+#toRemove <- round(sum(allGoods) * 0.9)
+#removeGoods <- which(allGoods == TRUE)
+#sample90 <- sample(removeGoods, toRemove) # row numbers of 90% of the Good data
+#wineReduced <- wineReduced[-sample90, ]
+
+Acceptable <- wineReduced$price[wineReduced$rating == "Acceptable"]
+Good <- wineReduced$price[wineReduced$rating == "Good"]
+```
+
+```{r,echo=FALSE}
+#Getting the actual mean difference
+meanDiff <- mean(Good) - mean(Acceptable)
+N <- 10000
+
+diffvals <- rep(NA, N)
+for (i in 1:N) {
+  fakeDiff <- sample(wineReduced$rating) #no replacement for permutation tests
+  diffvals[i] <- mean(wineReduced$price[fakeDiff == "Good"]) - mean(wineReduced$price[fakeDiff == "Acceptable"])
+}
+
+hist(diffvals, main="Permuted Sample Mean Diff in Prices", xlab="Price", col="thistle2", xlim = c(-5,5))
+abline(v = meanDiff, col="slateblue4", lwd = 3)
+text(meanDiff-0.3,900,paste("Actual Diff in Means =", round(meanDiff,2)),srt = 90, cex = 0.7)
+```
+Two-sided p value: 
+```{r, echo=FALSE}
+mean(abs(diffvals) >= abs(meanDiff))
+# require(Hmisc)                                    # Exports `binconf`
+# k <- sum(abs(diffvals) >= abs(meanDiff))                      # Two-tailed test
+# zapsmall(binconf(k, length(diffvals), method='exact'))
+t.test(price ~ rating, data=wineReduced)
+```
+
+*The estimated two-sided p-value for the difference in mean is 0. From computing the binomial estimate of the p-value and a confidence interval, we note that estimated p-value is exactly 0 with the 95% confidence interval from 0 to 0.0003688199. Comparing with a t-test that reports the p-value as < 0.00000000000000022,  we can safely conclude our actual perm test p-value is extremely small and <<< 0.05, hence we reject our null hypothesis that there is no difference between the "Acceptable" and "Good" means, and conclude that there is a statistically significant difference among prices between the two groups.*
+
+**Multiple Regression for Predictors of Wine Rating**
+We were interested in what were the factors that could significantly predict the rating of a wine. Is the country where the wine is produced a good predictor? The price? Or perhaps grape variety? We set out to investigate this doing a multiple regression for predictors of wine rating. 
+```{r,echo=FALSE}
+winePred <- na.omit(wine[, c("X", "country", "points", "price", "rating","variety", "rating_num")])
+
+#Scatterplot for continuous variables
+winePred$price[winePred$price > 1000] <- NA #remove the 2 huge outliers of price
+
+plot(points~price, data = winePred, main = "Wine Rating Points vs Price", xlab = "Price in USD", ylab = "Points", pch = 19, col = "red")
+
+cor.test(winePred$price, winePred$points)
+
+#Make boxplots for categorical variables - wine grape variety and country - to look for differences in the response varaible between levels of a categorical variable.
+boxplot(points ~ country, data = winePred, col = "light blue", main = "Wine Rating Points by Country", ylab = "Points",cex.axis = 0.8, las = 2)
+par(mar = c(6, 4, 2, 2) + 0.25)
+boxplot(points ~ variety, data = winePred, col = "lavender", main = "Wine Rating Points by Grape Variety", ylab = "Points", cex.axis = 0.50, las = 2)
+```
+
+*There is a moderate positive correlation (0.48) between the price and rating points of a wine, where the higher the price of the wine, generally the higher the rating in points. This is observed in the scatterplot and the correlation coefficient. From the boxplots, we can see that the mean wine rating does seem to vary by country and by grape variety, but it's not clear how significant these differences are just from looking at the plots. Thus, we went ahead and tried to fit a model to see if the wine's country of origin, price of wine, or grape variety were good predictors of its rating.*
+
+```{r,echo=FALSE}
+mod1 <- lm(points ~ country + price + variety, data = winePred)
+summary(mod1)
+```
+*We can see that many of the coefficients in this model are significant, though which is the best predictor is not clear. To find the best predictor, we will do a best subset regression.*
+
+```{r,include=FALSE}
+library(leaps)
+library(car)
+library(olsrr)
+```
+
+```{r, echo=FALSE}
+winePredict <- regsubsets(points ~ country + price + variety, data = winePred) 
+#summary(winePredict)$which
+```
+
+*Based on the best subset regression, if we were to choose one predictor for the wine rating by points, we would choose price. But before we can claim that this predictor, or any of the predictors are significant, we must check our assumptions and look at our residual plots.*
+
+```{r,echo=FALSE}
+myResPlots <- function(model){
+  
+  #Normal quantile plot of studentized residuals
+  qqPlot(rstudent(model), pch=19, main=paste("NQ Plot of Studentized Residuals"))
+  
+  #plot of fitted vs. studentized residuals
+  plot(rstudent(model) ~ model$fitted.values, pch=19, col='red', xlab="Fitted Values", ylab = "Studentized Residuals",
+     main = paste("Fits vs. Studentized Residuals"))
+  abline(h=0, lwd=3)
+  abline(h=c(3,-3), lty=2, lwd=3, col="blue")
+
+  #Cooks distance plot
+  ols_plot_cooksd_chart(model)
+  
+  #Combination outlier and influence plot
+  ols_plot_resid_lev(model)
+}
+
+myResPlots(mod1) 
+```
+
+*Looking at the residual plots, the data does not seem to be normally distributed. On the plot of studentized residuals, there is a tail at the left end of the plot that strongly deviates from the line. This makes me think there is almost another "group" of points that are significantly different from most of the data in someway. It does not look like a transformation will fix this and normalize the data, so we will take a deeper look at the data and just move forward with this in mind.*
+
+```{r,echo=FALSE}
+#Investigate the non-normal points by looking at the quantiles
+quantiles <- rstudent(mod1)
+qodd <- quantiles[quantiles < (-4)]
+Xodd <- subset(winePred, X %in% c(84821, 97151, 124431, 51979, 30111, 108485, 96149, 30132, 36530, 84808, 82752, 65954, 21080, 25383, 117845, 72746, 84804, 108646, 354, 90909, 21096, 121935, 48959, 83853, 30122, 113567, 6680, 21087, 15136, 63767, 38979, 111968, 124437, 44383, 80583, 50802, 45454, 45455, 11198, 56961, 125848, 75943, 3202, 44995, 27602, 34029, 79235, 26206, 32537, 128992, 115906, 69211, 102821, 124435, 87417, 5912, 21717, 46138, 57819, 15500, 106828, 75952, 125834, 89730, 23911, 80460, 65358, 108647, 33204, 79334, 76624, 69203))
+Xodd <- Xodd[, c("X", "country", "points", "price", "variety")]
+#table(Xodd$country)
+#table(Xodd$price)
+#table(Xodd$points)
+#table(Xodd$variety)
+```
+
+```{r, include = FALSE}
+XoddPinot <- Xodd[c(1, 3, 8, 10 , 12, 14, 24, 27, 28, 29, 30, 35, 39, 40, 42, 43, 45, 47, 54, 56), ] 
+head(XoddPinot)
+XoddChard <- Xodd[c(11, 13, 15, 18, 21, 23, 25, 41, 46, 49), ]
+head(XoddChard)
+```
+*We decided to look at the points that had residuals less than -4, for that is when the tail of the plot of studentized residuals dropped away from the rest of the points. We tried looking for any trend with these observations and it seems that most of the wines in this group are from the US or France, and are a Pinot Noir or Chardonnay. But what probably made these observations weird was that they almost all had high point ratings in the mid to high 90's, but had wildly different prices. For example, 2 wines, one from France and one from the US were both rated a 95, but the French wine was priced at $200, whereas the US wine was only $50. So with this huge variation in prices among very similar point ratings, this is probably why our data is not normal. In the future we may choose to separate out these wines or do more specific subsetting.*
+
+**Conclusions and Summary**
+In this report, we have managed to gain some insight on how to choose the best wine to buy based on the analysis of Wine Review Data 2017 obtained from Kaggle, as well as learned a little bit more about global alcohol consumption by Web data scrapping from Wikapedia. 
+
+  + The countries producing the highest amount of rated wines are the United States, France and Italy. 
+  + There is a statistsically differece in means between the ratings of the top two rated countries (the US and France). 
+  + While Kaggle reveals that wines produced in the US are the most reviewed, US citizens prefer to consume Beer and Spirits over wine.
+  + There is a moderate positive correlation between price of wine and its point rating, which can be broken down by country of origin.
+  + True mean price of wine increases with higher rating cateogry for the wine. 
+  + It initally seemed that price would be an appropriate predictor for rating by points, however analysis was complicated by a wide range of observations, and wide price variety among highly rated wines. Grouping variables or undergoing specific subsetting might prove more fruitful in future analysis. 
